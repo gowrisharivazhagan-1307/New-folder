@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StockSeer — AI Price Prediction</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.10.0/tf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #040d14;
+    --surface: #0a1a27;
+    --surface2: #0f2236;
+    --border: #1a3a52;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --accent3: #7fff6b;
+    --text: #cde8f8;
+    --muted: #5a8aa8;
+    --danger: #ff4d6d;
+    --up: #39ff8a;
+    --down: #ff4d6d;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; position: relative; z-index: 1; }
+
+  /* Header */
+  header {
+    padding: 24px 0 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .logo {
+    font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em;
+    color: #fff;
+  }
+  .logo span { color: var(--accent); }
+  .badge {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem; color: var(--accent); border: 1px solid var(--accent);
+    padding: 3px 8px; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+
+  /* Ticker input panel */
+  .input-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 28px 32px;
+    margin: 32px 0 20px;
+    display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 16px; align-items: end;
+  }
+
+  .field label {
+    display: block; font-size: 0.7rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+    font-family: 'Space Mono', monospace;
+  }
+  .field input, .field select {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 14px; font-size: 0.95rem;
+    font-family: 'Space Mono', monospace; outline: none;
+    transition: border-color 0.2s;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field select option { background: var(--surface2); }
+
+  .btn-run {
+    background: var(--accent); color: #040d14;
+    border: none; padding: 10px 28px;
+    font-family: 'Syne', sans-serif; font-size: 0.95rem; font-weight: 800;
+    letter-spacing: 0.05em; text-transform: uppercase;
+    cursor: pointer; white-space: nowrap;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .btn-run:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(0,229,255,0.3); }
+  .btn-run:active { transform: translateY(0); }
+  .btn-run:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  /* Status bar */
+  .status-bar {
+    font-family: 'Space Mono', monospace; font-size: 0.72rem;
+    color: var(--muted); padding: 10px 0;
+    display: flex; align-items: center; gap: 8px;
+    min-height: 32px;
+  }
+  .status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+  }
+  .status-dot.active { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1s infinite; }
+  .status-dot.done { background: var(--up); box-shadow: 0 0 8px var(--up); animation: none; }
+  .status-dot.error { background: var(--danger); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Metrics row */
+  .metrics {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px;
+  }
+  .metric-card {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 16px 20px;
+    opacity: 0; transform: translateY(12px);
+    transition: opacity 0.4s, transform 0.4s;
+  }
+  .metric-card.visible { opacity: 1; transform: translateY(0); }
+  .metric-label {
+    font-family: 'Space Mono', monospace; font-size: 0.65rem;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .metric-value {
+    font-size: 1.5rem; font-weight: 800; letter-spacing: -0.03em;
+  }
+  .metric-value.up { color: var(--up); }
+  .metric-value.down { color: var(--down); }
+  .metric-value.neutral { color: var(--accent); }
+
+  /* Chart area */
+  .chart-wrapper {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 24px; margin-bottom: 20px;
+    position: relative;
+  }
+  .chart-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 20px;
+  }
+  .chart-title {
+    font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.1em; color: var(--muted); font-family: 'Space Mono', monospace;
+  }
+  .legend {
+    display: flex; gap: 16px;
+  }
+  .legend-item {
+    font-family: 'Space Mono', monospace; font-size: 0.65rem;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .legend-dot { width: 8px; height: 2px; }
+
+  canvas#mainChart { width: 100% !important; }
+
+  /* Training progress */
+  .training-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 20px 24px; margin-bottom: 20px;
+    display: none;
+  }
+  .training-panel.visible { display: block; }
+  .train-label {
+    font-family: 'Space Mono', monospace; font-size: 0.7rem;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em;
+    margin-bottom: 10px;
+  }
+  .progress-bar-outer {
+    height: 4px; background: var(--surface2); width: 100%; position: relative; overflow: hidden;
+  }
+  .progress-bar-inner {
+    height: 100%; background: var(--accent);
+    transition: width 0.3s; width: 0%;
+    box-shadow: 0 0 10px var(--accent);
+  }
+  .epoch-log {
+    margin-top: 12px;
+    font-family: 'Space Mono', monospace; font-size: 0.68rem;
+    color: var(--muted); height: 50px; overflow-y: auto;
+  }
+
+  /* Prediction table */
+  .pred-table-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 20px 24px; margin-bottom: 32px;
+    display: none;
+  }
+  .pred-table-wrap.visible { display: block; }
+  table {
+    width: 100%; border-collapse: collapse;
+    font-family: 'Space Mono', monospace; font-size: 0.75rem;
+  }
+  th {
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+    padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: left;
+    font-weight: 400;
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid rgba(26,58,82,0.4); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(0,229,255,0.04); }
+  .tag { display: inline-block; padding: 2px 7px; font-size: 0.65rem; }
+  .tag.actual { background: rgba(0,229,255,0.12); color: var(--accent); }
+  .tag.predicted { background: rgba(255,107,53,0.12); color: var(--accent2); }
+  .tag.future { background: rgba(127,255,107,0.12); color: var(--accent3); }
+
+  /* Responsive */
+  @media(max-width:768px) {
+    .input-panel { grid-template-columns: 1fr 1fr; }
+    .metrics { grid-template-columns: 1fr 1fr; }
+    .btn-run { grid-column: span 2; }
+  }
+  @media(max-width:480px) {
+    .input-panel { grid-template-columns: 1fr; }
+    .metrics { grid-template-columns: 1fr 1fr; }
+    .btn-run { grid-column: span 1; }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--surface2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">Stock<span>Seer</span></div>
+    <div class="badge">TensorFlow LSTM · AI Powered</div>
+  </header>
+
+  <div class="input-panel">
+    <div class="field">
+      <label>Stock Ticker</label>
+      <input id="ticker" type="text" value="AAPL" placeholder="e.g. AAPL, TSLA" maxlength="6"/>
+    </div>
+    <div class="field">
+      <label>Dataset Size</label>
+      <select id="dataSize">
+        <option value="120">120 Days</option>
+        <option value="200" selected>200 Days</option>
+        <option value="300">300 Days</option>
+        <option value="500">500 Days</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Forecast Days</label>
+      <select id="forecastDays">
+        <option value="5">5 Days</option>
+        <option value="10" selected>10 Days</option>
+        <option value="20">20 Days</option>
+        <option value="30">30 Days</option>
+      </select>
+    </div>
+    <button class="btn-run" id="runBtn" onclick="runPrediction()">▶ RUN MODEL</button>
+  </div>
+
+  <div class="status-bar">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Ready — configure parameters and run the model</span>
+  </div>
+
+  <div class="metrics" id="metricsRow">
+    <div class="metric-card" id="m1"><div class="metric-label">Last Price</div><div class="metric-value neutral" id="mv1">—</div></div>
+    <div class="metric-card" id="m2"><div class="metric-label">Next Day Pred.</div><div class="metric-value" id="mv2">—</div></div>
+    <div class="metric-card" id="m3"><div class="metric-label">Model RMSE</div><div class="metric-value neutral" id="mv3">—</div></div>
+    <div class="metric-card" id="m4"><div class="metric-label">Trend Signal</div><div class="metric-value" id="mv4">—</div></div>
+  </div>
+
+  <div class="training-panel" id="trainingPanel">
+    <div class="train-label">Training LSTM Model — <span id="epochCount">Epoch 0/50</span></div>
+    <div class="progress-bar-outer"><div class="progress-bar-inner" id="progressBar"></div></div>
+    <div class="epoch-log" id="epochLog"></div>
+  </div>
+
+  <div class="chart-wrapper">
+    <div class="chart-header">
+      <div class="chart-title" id="chartTitle">Awaiting model run...</div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#00e5ff"></div>Actual</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ff6b35"></div>Predicted</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#7fff6b; border-top:1px dashed #7fff6b; height:0"></div>Forecast</div>
+      </div>
+    </div>
+    <canvas id="mainChart" height="320"></canvas>
+  </div>
+
+  <div class="pred-table-wrap" id="predTableWrap">
+    <div class="train-label" style="margin-bottom:14px">Forecast Table</div>
+    <table id="predTable">
+      <thead><tr><th>#</th><th>Date</th><th>Price</th><th>Change %</th><th>Type</th></tr></thead>
+      <tbody id="predTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ─── Synthetic stock price generator (realistic GBM + seasonality) ───────────
+function generateStockData(ticker, n) {
+  const seeds = { AAPL:182, TSLA:248, GOOGL:141, MSFT:326, AMZN:185, NVDA:440, META:302, default:150 };
+  let price = seeds[ticker.toUpperCase()] || seeds.default;
+  const mu = 0.0004 + Math.random() * 0.0004;
+  const sigma = 0.015 + Math.random() * 0.01;
+  const prices = [price];
+  const now = new Date(); now.setDate(now.getDate() - n);
+  const dates = [];
+
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now); d.setDate(now.getDate() + i);
+    if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+    if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+    dates.push(d.toLocaleDateString('en-US', { month:'short', day:'numeric' }));
+    const z = (Math.random() + Math.random() + Math.random() - 1.5) * 1.2;
+    const seasonal = 0.002 * Math.sin(i / 30 * Math.PI);
+    price = price * Math.exp(mu + seasonal + sigma * z);
+    prices.push(price);
+  }
+  return { prices: prices.slice(0, n), dates };
+}
+
+// ─── Normalize / denormalize ─────────────────────────────────────────────────
+function minMaxScale(arr) {
+  const min = Math.min(...arr), max = Math.max(...arr);
+  return { scaled: arr.map(v => (v - min) / (max - min)), min, max };
+}
+function denormalize(val, min, max) { return val * (max - min) + min; }
+
+// ─── Build sequences ─────────────────────────────────────────────────────────
+function makeSequences(data, lookback) {
+  const X = [], y = [];
+  for (let i = lookback; i < data.length; i++) {
+    X.push(data.slice(i - lookback, i));
+    y.push(data[i]);
+  }
+  return { X, y };
+}
+
+// ─── LSTM model ──────────────────────────────────────────────────────────────
+function buildModel(lookback) {
+  const model = tf.sequential();
+  model.add(tf.layers.lstm({ units: 64, inputShape: [lookback, 1], returnSequences: true }));
+  model.add(tf.layers.dropout({ rate: 0.2 }));
+  model.add(tf.layers.lstm({ units: 32 }));
+  model.add(tf.layers.dropout({ rate: 0.1 }));
+  model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+  model.add(tf.layers.dense({ units: 1 }));
+  model.compile({ optimizer: tf.train.adam(0.001), loss: 'meanSquaredError' });
+  return model;
+}
+
+// ─── Chart ───────────────────────────────────────────────────────────────────
+let chartInstance = null;
+function renderChart(labels, actual, predicted, forecastLabels, forecast) {
+  const ctx = document.getElementById('mainChart').getContext('2d');
+  if (chartInstance) chartInstance.destroy();
+
+  const allLabels = [...labels, ...forecastLabels];
+  const actualData = actual.map((v, i) => ({ x: labels[i], y: +v.toFixed(2) }));
+  const predData = predicted.map((v, i) => ({ x: labels[i + labels.length - predicted.length], y: +v.toFixed(2) }));
+  const forecastData = forecast.map((v, i) => ({ x: forecastLabels[i], y: +v.toFixed(2) }));
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: allLabels,
+      datasets: [
+        {
+          label: 'Actual',
+          data: actualData,
+          borderColor: '#00e5ff',
+          backgroundColor: 'rgba(0,229,255,0.05)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: true,
+          parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+        },
+        {
+          label: 'Predicted',
+          data: predData,
+          borderColor: '#ff6b35',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+        },
+        {
+          label: 'Forecast',
+          data: forecastData,
+          borderColor: '#7fff6b',
+          borderDash: [6, 4],
+          backgroundColor: 'rgba(127,255,107,0.07)',
+          borderWidth: 2,
+          pointRadius: 4,
+          pointBackgroundColor: '#7fff6b',
+          tension: 0.3,
+          fill: true,
+          parsing: { xAxisKey: 'x', yAxisKey: 'y' }
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0a1a27',
+          borderColor: '#1a3a52',
+          borderWidth: 1,
+          titleColor: '#5a8aa8',
+          bodyColor: '#cde8f8',
+          titleFont: { family: 'Space Mono', size: 11 },
+          bodyFont: { family: 'Space Mono', size: 12 },
+          callbacks: {
+            label: ctx => ` $${ctx.parsed.y.toFixed(2)}`
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            color: '#5a8aa8', font: { family: 'Space Mono', size: 9 },
+            maxTicksLimit: 10, maxRotation: 0
+          },
+          grid: { color: 'rgba(26,58,82,0.4)' },
+          border: { color: '#1a3a52' }
+        },
+        y: {
+          ticks: {
+            color: '#5a8aa8', font: { family: 'Space Mono', size: 9 },
+            callback: v => '$' + v.toFixed(0)
+          },
+          grid: { color: 'rgba(26,58,82,0.4)' },
+          border: { color: '#1a3a52' }
+        }
+      }
+    }
+  });
+}
+
+// ─── Status helpers ──────────────────────────────────────────────────────────
+function setStatus(msg, state = '') {
+  const dot = document.getElementById('statusDot');
+  document.getElementById('statusText').textContent = msg;
+  dot.className = 'status-dot' + (state ? ' ' + state : '');
+}
+
+// ─── Main orchestrator ───────────────────────────────────────────────────────
+async function runPrediction() {
+  const ticker = document.getElementById('ticker').value.trim().toUpperCase() || 'AAPL';
+  const n = parseInt(document.getElementById('dataSize').value);
+  const forecastDays = parseInt(document.getElementById('forecastDays').value);
+  const lookback = 20;
+  const EPOCHS = 50;
+
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('trainingPanel').classList.add('visible');
+  document.getElementById('predTableWrap').classList.remove('visible');
+  document.getElementById('epochLog').textContent = '';
+
+  // Hide metrics
+  ['m1','m2','m3','m4'].forEach(id => document.getElementById(id).classList.remove('visible'));
+
+  setStatus(`Generating ${n}-day dataset for ${ticker}...`, 'active');
+  await sleep(300);
+
+  const { prices, dates } = generateStockData(ticker, n);
+  const { scaled, min, max } = minMaxScale(prices);
+
+  setStatus('Building LSTM sequences...', 'active');
+  await sleep(200);
+  const { X, y } = makeSequences(scaled, lookback);
+
+  const trainSize = Math.floor(X.length * 0.8);
+  const Xtrain = X.slice(0, trainSize), ytrain = y.slice(0, trainSize);
+  const Xtest = X.slice(trainSize), ytest = y.slice(trainSize);
+
+  const xTensor = tf.tensor3d(Xtrain.map(s => s.map(v => [v])));
+  const yTensor = tf.tensor2d(ytrain.map(v => [v]));
+
+  setStatus(`Training LSTM (${EPOCHS} epochs)...`, 'active');
+  const model = buildModel(lookback);
+  document.getElementById('progressBar').style.width = '0%';
+
+  await model.fit(xTensor, yTensor, {
+    epochs: EPOCHS,
+    batchSize: 32,
+    shuffle: true,
+    callbacks: {
+      onEpochEnd: async (epoch, logs) => {
+        const pct = ((epoch + 1) / EPOCHS * 100).toFixed(0);
+        document.getElementById('progressBar').style.width = pct + '%';
+        document.getElementById('epochCount').textContent = `Epoch ${epoch + 1}/${EPOCHS}`;
+        const log = document.getElementById('epochLog');
+        log.textContent += `[${String(epoch+1).padStart(2,'0')}] loss: ${logs.loss.toFixed(6)}\n`;
+        log.scrollTop = log.scrollHeight;
+        if ((epoch + 1) % 5 === 0) await tf.nextFrame();
+      }
+    }
+  });
+
+  setStatus('Running predictions on test set...', 'active');
+  await sleep(200);
+
+  // Predict on test
+  const xTestTensor = tf.tensor3d(Xtest.map(s => s.map(v => [v])));
+  const predScaled = Array.from((await model.predict(xTestTensor)).dataSync());
+  const predActual = predScaled.map(v => denormalize(v, min, max));
+  const testActual = ytest.map(v => denormalize(v, min, max));
+
+  // RMSE
+  const rmse = Math.sqrt(testActual.reduce((s, v, i) => s + (v - predActual[i]) ** 2, 0) / testActual.length);
+
+  // Future forecast
+  let lastSeq = scaled.slice(-lookback);
+  const futurePrices = [];
+  for (let i = 0; i < forecastDays; i++) {
+    const inp = tf.tensor3d([lastSeq.map(v => [v])]);
+    const out = model.predict(inp).dataSync()[0];
+    futurePrices.push(denormalize(out, min, max));
+    lastSeq = [...lastSeq.slice(1), out];
+  }
+
+  // Forecast dates
+  const lastDate = new Date();
+  const futureDates = [];
+  for (let i = 1; i <= forecastDays; i++) {
+    const d = new Date(lastDate); d.setDate(lastDate.getDate() + i);
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+    futureDates.push(d.toLocaleDateString('en-US', { month:'short', day:'numeric' }));
+  }
+
+  // Build chart arrays
+  const testStartIdx = trainSize + lookback;
+  const chartLabels = dates;
+  const actualFull = prices;
+  const predFull = new Array(testStartIdx).fill(null).concat(predActual);
+
+  renderChart(
+    chartLabels, actualFull, predActual,
+    futureDates, futurePrices
+  );
+
+  document.getElementById('chartTitle').textContent =
+    `${ticker} · ${n}-Day History + ${forecastDays}-Day Forecast`;
+
+  // Metrics
+  const lastPrice = prices[prices.length - 1];
+  const nextDay = futurePrices[0];
+  const trend = futurePrices[futurePrices.length - 1] > lastPrice;
+
+  document.getElementById('mv1').textContent = '$' + lastPrice.toFixed(2);
+  const mv2 = document.getElementById('mv2');
+  mv2.textContent = '$' + nextDay.toFixed(2);
+  mv2.className = 'metric-value ' + (nextDay >= lastPrice ? 'up' : 'down');
+  document.getElementById('mv3').textContent = rmse.toFixed(3);
+  const mv4 = document.getElementById('mv4');
+  mv4.textContent = trend ? '▲ BULLISH' : '▼ BEARISH';
+  mv4.className = 'metric-value ' + (trend ? 'up' : 'down');
+
+  // Animate metrics
+  ['m1','m2','m3','m4'].forEach((id, i) => {
+    setTimeout(() => document.getElementById(id).classList.add('visible'), i * 80);
+  });
+
+  // Prediction table
+  const tbody = document.getElementById('predTableBody');
+  tbody.innerHTML = '';
+  // Last 5 actual
+  const tableRows = [];
+  for (let i = Math.max(0, prices.length - 5); i < prices.length; i++) {
+    tableRows.push({ date: dates[i], price: prices[i], change: i > 0 ? (prices[i] - prices[i-1]) / prices[i-1] * 100 : 0, type: 'actual' });
+  }
+  futurePrices.forEach((p, i) => {
+    const prev = i === 0 ? lastPrice : futurePrices[i - 1];
+    tableRows.push({ date: futureDates[i], price: p, change: (p - prev) / prev * 100, type: 'future' });
+  });
+
+  tableRows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    const chg = r.change;
+    tr.innerHTML = `
+      <td>${i + 1}</td>
+      <td>${r.date}</td>
+      <td style="font-weight:700">$${r.price.toFixed(2)}</td>
+      <td style="color:${chg >= 0 ? 'var(--up)' : 'var(--down)'}">
+        ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%
+      </td>
+      <td><span class="tag ${r.type}">${r.type.toUpperCase()}</span></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('predTableWrap').classList.add('visible');
+
+  xTensor.dispose(); yTensor.dispose(); xTestTensor.dispose();
+
+  setStatus(
+    `✓ Model trained · RMSE ${rmse.toFixed(3)} · ${forecastDays}-day forecast generated for ${ticker}`,
+    'done'
+  );
+  document.getElementById('runBtn').disabled = false;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
